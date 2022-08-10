@@ -1,0 +1,136 @@
+/*
+Author: Shashank Karki
+
+Description: The code batch exports the NDVI and LST imageries for a state over a time period as input by the user.
+The user needs to specify the folder to which the data is exported. The files will be stored in the specified folder in the associated Google Drive for the corresponding account.
+
+
+Using this code and any data derived with it, 
+you agree to cite the following reference 
+in any publications derived from them:
+Ermida, S.L., Soares, P., Mantas, V., Göttsche, F.-M., Trigo, I.F., 2020. 
+    Google Earth Engine open-source code for Land Surface Temperature estimation from the Landsat series.
+    Remote Sensing, 12 (9), 1471; https://doi.org/10.3390/rs12091471
+
+*/
+
+
+//Land Surface tempereature calculation based on Landsat_LST.js file (Ermida, Soares, Mantas, Göttsche & Trigo, 2020)
+var LandsatLST = require('users/sofiaermida/landsat_smw_lst:modules/Landsat_LST.js')
+
+var dataset = ee.FeatureCollection('TIGER/2016/States');
+
+// Select region of interest (State Name)
+var state='Virginia'
+var va = ee.Feature(dataset.filter(ee.Filter.eq('NAME', state)).first());
+var geometry=va.geometry();
+Map.centerObject(geometry);
+
+
+//Return the list of starting date, ending date and the interval between them
+function range(start, end) {
+  var lst = [];
+  for (var i=start; i<=end; i++) {
+    lst.push(i);
+  }
+  return lst;
+}
+//Converts interger to string
+function month_str(intMonth) {
+  if (intMonth<10){
+    return '0'+String(intMonth);
+  }
+  else{
+  return String(intMonth);
+  }
+}
+//Select the study period (Starting year, Ending year) the ouput will include both the starting year and ending year
+//For a single year, use both starting and ending years as the same year you want
+var years = range(2010,2010);
+console.log(years)
+
+  
+var months = ['01','02','03','04','05','06',
+              '07','08','09','10','11','12']; 
+  
+// var date_start = []
+// var date_end = []
+function date(year_arr, month_arr) {
+  var empty = [];
+  for(var i=0; i<year_arr.length; i++){
+    if(year_arr.length>5){
+      print("The number of years should not be greater than 5")
+      print("It takes time to run huge number of images from collection at server-side")
+      break;
+    }
+    for(var j=0; j<month_arr.length; j++){
+      var st = year_arr[i]+"-"+month_arr[j]+"-"+"01";
+      var en = year_arr[i]+"-"+month_arr[j]+"-"+"28";
+    
+      //Assign the landsat image to be used
+      if (parseInt(year_arr[i])>=2014) { 
+        var landsatCol = 'L8';
+      }
+      else if (parseInt(year_arr[i])>=2012) {
+        landsatCol = 'L7';
+      }
+      else {
+        landsatCol = 'L5';
+      }
+      
+      empty.push([st,en,landsatCol])
+      
+    }
+  }
+  return empty
+}
+
+var monthlyMap = date(years, months)
+var use_ndvi = true;
+
+var img = function(dates, i) {
+  // get landsat collection with added variables: NDVI, FVC, TPW, EM, LST
+  var LandsatColl = LandsatLST.collection(dates[2], dates[0], dates[1], geometry, use_ndvi);
+  // print(LandsatColl)
+  var exImage = LandsatColl.median().set('year',dates[0]);
+
+  var cmap1 = ['blue', 'cyan', 'green', 'yellow', 'red'];
+  var cmap2 = ['F2F2F2','EFC2B3','ECB176','E9BD3A','E6E600','63C600','00A600']; 
+  
+  // return exImage;
+  Map.centerObject(geometry)
+  
+  var year_month = String(dates[0]).slice(0,7)
+  Map.addLayer(exImage.select('NDVI'),{min: -1, max: 1, palette: ['blue', 'white', 'green']}, 'NDVI');
+  Map.addLayer(exImage.select('LST'),{min:270, max:320, palette:cmap1}, 'LST');
+  
+  
+  //Export NDVI and LST to your Google Drive Folder
+  var desp_ndvi = ee.String('NDVI-').cat(year_month).cat("-").cat(state);
+    desp_ndvi.evaluate(function (d){
+      Export.image.toDrive({
+      image: exImage.select('NDVI'),
+      description: d,
+      maxPixels: 4e10,
+      scale: 30,
+      region: geometry,
+      fileFormat: 'GeoTIFF',
+      });
+    });
+  
+  
+  var desp_LST = ee.String('LST-').cat(year_month).cat("-").cat(state);
+    desp_LST.evaluate(function (d){
+      Export.image.toDrive({
+      image: exImage.select('LST'),
+      description: d,
+      maxPixels: 4e10,
+      scale: 30,
+      region: geometry,
+      fileFormat: 'GeoTIFF',
+      });
+    });
+  
+};
+
+monthlyMap.map(img);
