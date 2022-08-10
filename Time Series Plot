@@ -1,0 +1,110 @@
+/*
+Author: Shashank Karki
+
+Description: The code generates a time series plot over certain years over a county for a time period as input by the user. The code is to be used with Google Earth Engine.
+The data associated with the code can be downloaded using the Console window where the chart is generated.
+
+Using this code and any data derived with it, 
+you agree to cite the following reference 
+in any publications derived from them:
+Ermida, S.L., Soares, P., Mantas, V., Göttsche, F.-M., Trigo, I.F., 2020. 
+    Google Earth Engine open-source code for Land Surface Temperature estimation from the Landsat series.
+    Remote Sensing, 12 (9), 1471; https://doi.org/10.3390/rs12091471
+
+*/
+
+
+//Land Surface tempereature calculation based on Landsat_LST.js and broadband_emiss.js file (Ermida, Soares, Mantas, Göttsche & Trigo, 2020)
+var LandsatLST = require('users/sofiaermida/landsat_smw_lst:modules/Landsat_LST.js')
+var BBE = require('users/sofiaermida/landsat_smw_lst:modules/broadband_emiss.js')
+
+
+
+
+var dataset_state = ee.FeatureCollection('TIGER/2016/States');
+
+// Select region of interest (State Name and County Name)
+var state_name ='Colorado'
+var county_name = 'Larimer'
+
+var county = ee.Feature(dataset_state.filter(ee.Filter.eq('NAME', state_name)).first());
+var county_id = county.get('STATEFP')
+var dataset_county = ee.FeatureCollection('TIGER/2016/Counties');
+var state = ee.Feature(dataset_county.filter(ee.Filter.eq('NAME', county_name))
+            .filter(ee.Filter.eq('STATEFP', county_id))
+            .first());
+
+
+var geometry = state.geometry();
+Map.centerObject(geometry);
+
+Map.addLayer(geometry)
+
+//Select starting date and ending date in 'YYYY-MM-DD' format
+var date_start = '2021-01-31';
+var date_end = '2021-12-31';
+var use_ndvi = true;
+
+//If there is a computation time out, the plots might have to be generated in two seperate runs
+//For example: 1984-2008 and 2009-2021
+
+// compute the LST for each Landsat
+var L8coll = LandsatLST.collection('L8', date_start, date_end, geometry, use_ndvi);
+var L7coll = LandsatLST.collection('L7', date_start, date_end, geometry, use_ndvi);
+var L5coll = LandsatLST.collection('L5', date_start, date_end, geometry, use_ndvi);
+var L4coll = LandsatLST.collection('L4', date_start, date_end, geometry, use_ndvi);
+
+
+//compute broadband emissivity
+L8coll = L8coll.map(BBE.addBand(true))
+L7coll = L7coll.map(BBE.addBand(true))
+L5coll = L5coll.map(BBE.addBand(true))
+L4coll = L4coll.map(BBE.addBand(true))
+
+// get bands for each landsat in one collection
+var getband = function(landsat, bandname){
+  var wrap = function(image){
+    return image.select(bandname).rename(bandname.concat('_').concat(landsat))
+  }
+  return wrap
+}
+// merge all Landsat LST collections for the chart
+var bandname = 'NDVI'
+var LandsatColl = L8coll.map(getband('L8',bandname));
+LandsatColl = LandsatColl.merge(L7coll.map(getband('L7',bandname)));
+LandsatColl = LandsatColl.merge(L5coll.map(getband('L5',bandname)));
+LandsatColl = LandsatColl.merge(L4coll.map(getband('L4',bandname)));
+
+//Generate variable [NDVI/LST] chart over study period
+var TimeSeries = ui.Chart.image.series(
+    LandsatColl, geometry, ee.Reducer.mean(), 30, 'system:time_start')
+        .setChartType('ScatterChart')
+        .setOptions({
+          vAxis: {title: bandname},
+          
+  trendlines: {
+    // 0: {  // add a trend line to the 1st series
+    //   type: 'linear',  // or 'polynomial', 'exponential'
+    //   color: 'green',
+    //   lineWidth: 5,
+    //   opacity: 0.2,
+    //   visibleInLegend: true,
+    // }
+  //,
+  1: {  // add a trend line to the 1st series
+      type: 'polynomial',//'linear',  // or , 'exponential'
+      color: 'green',
+      lineWidth: 5,
+      opacity: 0.2,
+      visibleInLegend: true,
+    }
+  },
+          lineWidth: 1,
+          pointSize: 4
+          
+          
+});
+print(TimeSeries)
+
+
+// To export in .csv format, click the arrow on the top right of the chart, it opens up in a new window where you can export it as .csv,.jpg. .svg
