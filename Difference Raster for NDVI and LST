@@ -1,0 +1,157 @@
+/*
+Author: Shashank Karki
+
+Description: The code generates difference rasters for NDVI and LST for a state and years with interval as specified by the user. The code is to be run in Google Earth Engine. 
+The user can batch export the image into a Google Drive folder, to be specified at the time of export.
+
+Using this code and any data derived with it, 
+you agree to cite the following reference 
+in any publications derived from them:
+Ermida, S.L., Soares, P., Mantas, V., Göttsche, F.-M., Trigo, I.F., 2020. 
+    Google Earth Engine open-source code for Land Surface Temperature estimation from the Landsat series.
+    Remote Sensing, 12 (9), 1471; https://doi.org/10.3390/rs12091471
+
+*/
+
+//Land Surface tempereature calculation based on Landsat_LST.js file (Ermida, Soares, Mantas, Göttsche & Trigo, 2020)
+var LandsatLST = require('users/sofiaermida/landsat_smw_lst:modules/Landsat_LST.js');
+
+var dataset = ee.FeatureCollection('TIGER/2016/States');
+// Select region of interest (State Name)
+var state='Virginia'
+var va = ee.Feature(dataset.filter(ee.Filter.eq('NAME', state)).first());
+var geometry=va.geometry();
+Map.addLayer(geometry)
+Map.centerObject(geometry);
+
+
+//Return the list of starting date, ending date and the gap between years
+function range(start, end, gap) {
+  var lst = [];
+  for (var i=start; i<=end; i++) {
+    lst.push(i);
+    i = i + gap - 1;
+  }
+  return lst;
+}
+
+function month_str(intMonth) {
+  if (intMonth<10){
+    return '0'+String(intMonth);
+  }
+  else{
+  return String(intMonth);
+  }
+}
+
+//Select the study period (Starting year, Ending year, Interval between years) the ouput will include both the starting year and ending year. 
+var years = range(2015,2022, 5);
+print (years)
+
+//Select the starting month and ending months you want to study; 01: Jan, 02: Feb, 03: Mar,..., 12: Dec
+var months = ['05', '07']; 
+// Note: You can choose the January of next yar as your study period by using var months = ['11', '12', '13']; where 13 is first month of next year
+
+//Function returns the list of starting year, ending year and the satellite image to be used
+function date(year_arr, month_arr) {
+  var empty = [];
+  for(var i=0; i<year_arr.length; i++){
+    if (parseInt(month_arr[1])>12) {
+      var st = String(parseInt(year_arr[i]))+"-"+month_str(parseInt(month_arr[0]))+"-"+"01";
+      var en = String(parseInt(year_arr[i])+1)+"-"+month_str(parseInt(month_arr[1])-12)+"-"+"28";
+    }
+    else{
+      st = year_arr[i]+"-"+month_arr[0]+"-"+"01";
+      en = year_arr[i]+"-"+month_arr[1]+"-"+"28";
+    }
+//Assign the landsat satellite to be used based on year input
+    if (parseInt(year_arr[i])>=2014) { 
+      var landsatCol = 'L8';
+    }
+    else if (parseInt(year_arr[i])>=2012) {
+      landsatCol = 'L7';
+    }
+    else {
+      landsatCol = 'L5';
+    }
+    
+    empty.push([st,en,landsatCol])
+    // empty.push([st,en])
+    // print (empty)
+  }
+  return empty
+}
+function year_interval(year){
+  var empty = []
+  for(var i=0; i<(year.length-1); i++){
+    print(String(year[i]))
+    var value = String(year[i]) + "-" + String(year[i+1])
+    empty.push(value)
+  }
+   return (empty)
+}
+var year_inter = year_interval(years)
+var gapMap = date(years, months)
+var use_ndvi = true;
+
+var outputImg = []
+
+//Map  data over study period
+var img = function(dates) {
+  // get landsat collection with added variables: NDVI, FVC, TPW, EM, LST
+  var LandsatColl = LandsatLST.collection(dates[2], dates[0], dates[1], geometry, use_ndvi);
+  // print(LandsatColl)
+  
+//Calculate the median of image collectio
+  var exImage = LandsatColl.median().set('year',dates[0]);
+  outputImg.push(exImage);
+  print(exImage);
+  var cmap1 = ['blue', 'cyan', 'green', 'yellow', 'red'];
+  var cmap2 = ['F2F2F2','EFC2B3','ECB176','E9BD3A','E6E600','63C600','00A600']; 
+  
+};
+
+gapMap.map(img);
+
+print(outputImg)
+
+
+
+outputImg.map (function(img,i){
+  // print(outputImg.length)
+  if(i<(outputImg.length-1)){
+    var NDVI_diff = outputImg[i+1].select('NDVI').subtract(outputImg[i].select('NDVI'));
+    var LST_diff = outputImg[i+1].select('LST').subtract(outputImg[i].select('LST'));
+    print(NDVI_diff)
+    var cmap1 = ['blue', 'cyan', 'green', 'yellow', 'red'];
+
+    Map.addLayer(NDVI_diff,{min: -2, max: 2, palette: ['red', 'white', 'green']}, 'Diff_NDVI'+year_inter[i])
+    Map.addLayer(LST_diff,{min:270, max:320, palette:cmap1}, 'Diff_LST'+year_inter[i])
+    
+    var desp_ndvi = ee.String('NDVI-').cat(year_inter[i]);
+    desp_ndvi.evaluate(function (d){
+      Export.image.toDrive({
+      image: NDVI_diff.select('NDVI'),
+      description: d,
+      maxPixels: 4e10,
+      scale: 30,
+      region: geometry,
+      fileFormat: 'GeoTIFF',
+      });
+    });
+    
+    var desp_lst = ee.String('LST-').cat(year_inter[i]);
+    desp_lst.evaluate(function (d){
+      Export.image.toDrive({
+      image: LST_diff.select('LST'),
+      description: d,
+      maxPixels: 4e10,
+      scale: 30,
+      region: geometry,
+      fileFormat: 'GeoTIFF',
+    }); 
+  });
+  }
+})
+
+//You can change the color params of NDVI_diff and LST_diff for visualization
